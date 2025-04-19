@@ -8,6 +8,7 @@ import requests
 import os
 from passlib.context import CryptContext
 from fastapi.responses import JSONResponse
+from ..utils.email import send_reset_email
 
 load_dotenv()
 
@@ -22,6 +23,7 @@ HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
 ALGORITHM = "HS256"
+FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 
 # Password hashing settings
@@ -33,11 +35,12 @@ class UserRegister(BaseModel):
     password: str
     name: str
 
+class PasswordResetCheck(BaseModel):
+    email: str
 class UserLogin(BaseModel):
     email: str
     password: str
     
-
 class UserInDB(UserRegister):
     password: str
 
@@ -180,7 +183,7 @@ async def reset_password(request: ResetPasswordRequest):
         payload = jwt.decode(request.token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
         if not email:
-            raise HTTPException(status_code=400, detail="Invalid token: email missing")
+            raise HTTPException(status_code=400, detail="Invalid token")
         
         # 2. Hash new password
         hashed_password = pwd_context.hash(request.new_password)
@@ -203,3 +206,32 @@ async def reset_password(request: ResetPasswordRequest):
 
     except JWTError:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
+    
+
+@router.post("/reset-password-link")
+async def send_reset_password_link (request: PasswordResetCheck):
+    check_user = check_if_user_exists(request.email)
+
+    if check_user is None or check_user == {}:
+        raise HTTPException(status_code=404, detail="User is not registered")
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode = {
+        "sub": request.email,
+        "exp": datetime.utcnow() + access_token_expires
+    }
+
+    access_token = jwt.encode(to_encode, JWT_SECRET_KEY ,algorithm=ALGORITHM)
+
+    reset_link = f"{FRONTEND_URL}/reset-password?token={access_token}"
+
+    # Send the email using your utility
+    send_reset_email(to_email=request.email, reset_link=reset_link)
+
+    return JSONResponse(content={
+        "status": "success",
+        "message": f"Reset password email sent to {request.email}"
+    })
+    
+
+
