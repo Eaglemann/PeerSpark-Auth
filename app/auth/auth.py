@@ -149,13 +149,26 @@ async def login(user: UserLogin):
     }
     access_token = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
-    # Set the JWT as a session cookie (optional: set `httponly=True` for added security)
     response = JSONResponse(content={
         "message": "Login successful",
-        "user": {"id": user_data.get("id"), "email": user_data.get("email"), "name": user_data.get("name")},
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user_data.get("id"),
+            "email": user_data.get("email"),
+            "name": user_data.get("name"),
+        }
     })
-    response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-    
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="lax",
+        secure=False  # change to True when in HTTPS production
+    )
+
     return response
 
 # Reset password
