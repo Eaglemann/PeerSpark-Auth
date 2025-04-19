@@ -1,7 +1,22 @@
 from fastapi import FastAPI
-from app.auth import router as auth_router  # This should work if router is correctly defined in app/auth.py
+from app.auth import router as auth_router
+from fastapi.middleware.cors import CORSMiddleware
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL],  # TODO change later to a .env
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include the authentication router
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
