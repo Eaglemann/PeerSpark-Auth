@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import requests
 import os
 from passlib.context import CryptContext
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -148,16 +149,14 @@ async def login(user: UserLogin):
     }
     access_token = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": {
-            "id": user_data.get("id"),
-            "email": user_data.get("email"),
-            "name": user_data.get("name"),
-        }
-    }
-
+    # Set the JWT as a session cookie (optional: set `httponly=True` for added security)
+    response = JSONResponse(content={
+        "message": "Login successful",
+        "user": {"id": user_data.get("id"), "email": user_data.get("email"), "name": user_data.get("name")},
+    })
+    response.set_cookie(key="access_token", value=access_token, httponly=True, max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    
+    return response
 
 # Reset password
 
