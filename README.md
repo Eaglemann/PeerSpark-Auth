@@ -1,2 +1,2 @@
 # PeerSpark-Auth
-Authentication Service for PeerSpark build with FastAPI
+Authentication Service for PeerSpark build with FastAPI and Hasura
