@@ -2,11 +2,11 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from jose import jwt
+from jose.exceptions import JWTError
 from pydantic import BaseModel
 import requests
 import os
 from passlib.context import CryptContext
-from typing import Optional
 
 load_dotenv()
 
@@ -15,11 +15,13 @@ router = APIRouter()
 
 # Hasura settings
 HASURA_GRAPHQL_API_CREATE_USER = os.getenv("HASURA_GRAPHQL_API_CREATE_USER")
-HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER",)
+HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
+HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
 ALGORITHM = "HS256"
+
 
 # Password hashing settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -37,6 +39,10 @@ class UserLogin(BaseModel):
 
 class UserInDB(UserRegister):
     password: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
 
 # Helper function for password hashing
 def get_password_hash(password: str):
@@ -60,6 +66,9 @@ def check_if_user_exists(email: str):
     
     raise HTTPException(status_code=500, detail="Error checking user existence in Hasura")
 
+# Helper function to retrieve user from the data, neccesary for login
+# TODO refactor check_if_user_exists and fetch_user_data together
+
 def fetch_user_data(email: str):
     headers = {
         'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
@@ -71,6 +80,20 @@ def fetch_user_data(email: str):
         return users[0] if users else None
     raise HTTPException(status_code=500, detail="Error fetching user")
 
+# Function to update the password
+
+def update_password_in_hasura(email: str, hashed_password: str):
+    headers = {
+        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "email": email,
+        "new_password": hashed_password
+    }
+    response = requests.post(HASURA_GRAPHQL_API_RESET_PASSWORD, json=payload, headers=headers)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to update password in Hasura")
 
 # Function to create a new user
 def create_user_in_hasura(user_data: UserInDB):
@@ -90,6 +113,7 @@ def create_user_in_hasura(user_data: UserInDB):
     return response.json()
 
 # Register route
+
 @router.post("/register")
 async def register(user: UserRegister):
     user_exists = check_if_user_exists(user.email)
@@ -103,6 +127,8 @@ async def register(user: UserRegister):
     created_user = create_user_in_hasura(new_user)
 
     return {"message": "User created successfully", "user": created_user}
+
+# Login
 
 @router.post("/login")
 async def login(user: UserLogin):
@@ -131,3 +157,37 @@ async def login(user: UserLogin):
             "name": user_data.get("name"),
         }
     }
+
+
+# Reset password
+
+@router.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    try:
+        # 1. Decode token
+        payload = jwt.decode(request.token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token: email missing")
+        
+        # 2. Hash new password
+        hashed_password = pwd_context.hash(request.new_password)
+
+        # 3. Call Hasura mutation
+        headers = {
+            "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "email": email,
+            "password": hashed_password
+        }
+        response = requests.post(HASURA_GRAPHQL_API_RESET_PASSWORD, json=data, headers=headers)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Failed to update password in Hasura")
+
+        return {"message": "Password updated successfully"}
+
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")

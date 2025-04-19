@@ -175,3 +175,4 @@ cython_debug/
 
 # Other
 PeerSpark-venv
+generate_token.py
