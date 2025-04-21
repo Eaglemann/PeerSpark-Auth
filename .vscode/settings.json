@@ -1,4 +1,0 @@
-{
-  "python.analysis.extraPaths": ["./app/auth"],
-  "postman.settings.dotenv-detection-notification-visibility": false
-}

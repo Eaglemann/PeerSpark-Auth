@@ -181,3 +181,4 @@ settings.json
 .vscode/settings.json
 *.json
 /.vscode
+.vscode
