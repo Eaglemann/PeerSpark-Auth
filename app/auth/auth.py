@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import List
 from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from jose import jwt
@@ -9,6 +10,7 @@ import os
 from passlib.context import CryptContext
 from fastapi.responses import JSONResponse
 from ..utils.email import send_reset_email
+from fastapi import Request
 
 load_dotenv()
 
@@ -19,6 +21,7 @@ router = APIRouter()
 HASURA_GRAPHQL_API_CREATE_USER = os.getenv("HASURA_GRAPHQL_API_CREATE_USER")
 HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
 HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD")
+HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -34,6 +37,16 @@ class UserRegister(BaseModel):
     email: str
     password: str
     name: str
+
+class SkillItem(BaseModel):
+    skill_id: str
+
+class SkillCreatePayload(BaseModel):
+    skills: List[SkillItem]
+    age: int
+    occupation: str
+    gender: str
+    location: str
 
 class PasswordResetCheck(BaseModel):
     email: str
@@ -173,6 +186,57 @@ async def login(user: UserLogin):
     )
 
     return response
+
+# Update profile
+
+@router.post("/update-profile")
+async def update_profile(request: Request, payload: SkillCreatePayload):
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
+    try:
+        decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        email = decoded_payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Get user ID from Hasura
+    user = fetch_user_data(email)
+    user_id = user.get("id")
+
+    # Build the skill objects list
+    skill_objects = [
+        {"user_id": user_id, "skill_id": skill.skill_id}
+        for skill in payload.skills
+    ]
+
+    # Build the JSON body expected by your Hasura REST endpoint
+    hasura_payload = {
+        "userId": user_id,
+        "age": payload.age,
+        "occupation": payload.occupation,
+        "gender": payload.gender,
+        "location": payload.location,
+        "skillObjects": skill_objects
+    }
+
+    headers = {
+        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(HASURA_GRAPHQL_API_UPDATE_USER, json=hasura_payload, headers=headers)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+
+    return {"message": "Profile and skills updated successfully"}
+
+
+    
 
 # Reset password
 
