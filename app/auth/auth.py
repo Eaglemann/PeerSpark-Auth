@@ -6,6 +6,7 @@ from jose import jwt
 from jose.exceptions import JWTError
 from pydantic import BaseModel
 import requests
+import httpx
 import os
 from passlib.context import CryptContext
 from fastapi.responses import JSONResponse
@@ -22,6 +23,7 @@ HASURA_GRAPHQL_API_CREATE_USER = os.getenv("HASURA_GRAPHQL_API_CREATE_USER")
 HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
 HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD")
 HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
+HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -47,6 +49,7 @@ class SkillCreatePayload(BaseModel):
     occupation: str
     gender: str
     location: str
+
 
 class PasswordResetCheck(BaseModel):
     email: str
@@ -236,6 +239,38 @@ async def update_profile(request: Request, payload: SkillCreatePayload):
     return {"message": "Profile and skills updated successfully"}
 
 
+#Get user data
+
+@router.post("/user-data")
+async def get_user_data(request: Request):  # TODO adjust name of pydantic model used to validate user
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    
+    try:
+        decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        email = decoded_payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    user = fetch_user_data(email)
+    user_id = user.get("id")
+
+    hasura_payload = {
+        "userId" : user_id
+    }
+
+    headers = {
+        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(HASURA_GRAPHQL_API_GET_USER_DATA, json=hasura_payload, headers=headers)
+
+    return response.json()
     
 
 # Reset password
