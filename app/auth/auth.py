@@ -24,6 +24,7 @@ HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
 HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD")
 HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
 HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
+HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -305,6 +306,44 @@ async def reset_password(request: ResetPasswordRequest):
 
     except JWTError:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+# Get all users
+@router.post("/discover")
+async def discover(request: Request):
+    token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
+    try:
+        decode_payload = jwt.decode(token, JWT_SECRET_KEY, [ALGORITHM])
+        email = decode_payload.get("sub")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    payload = {
+        "excludeEmail": email
+    }
+
+
+    headers = {
+            "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+            "Content-Type": "application/json"
+        }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(HASURA_GRAPHQL_API_GET_ALL_USER, json=payload, headers=headers)
+
+    return response.json()
+
+
+    
+
+
+
     
 
 @router.post("/reset-password-link")
