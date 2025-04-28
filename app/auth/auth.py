@@ -25,6 +25,7 @@ HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD
 HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
 HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
 HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
+HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -95,6 +96,17 @@ def fetch_user_data(email: str):
         'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
     }
     response = requests.post(HASURA_GRAPHQL_API_CHECK_USER, headers=headers, json={"email": email})
+    if response.status_code == 200:
+        data = response.json()
+        users = data.get("users", [])
+        return users[0] if users else None
+    raise HTTPException(status_code=500, detail="Error fetching user")
+
+def get_all_users():
+    headers = {
+        'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
+    }
+    response = requests.get(HASURA_GRAPHQL_API_GET_ALL, headers=headers)
     if response.status_code == 200:
         data = response.json()
         users = data.get("users", [])
@@ -186,7 +198,8 @@ async def login(user: UserLogin):
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         samesite="lax",
-        secure=False  # change to True when in HTTPS production
+        secure=False,  # change to True when in HTTPS production
+        path="/"
     )
 
     return response
@@ -243,7 +256,7 @@ async def update_profile(request: Request, payload: SkillCreatePayload):
 #Get user data
 
 @router.post("/user-data")
-async def get_user_data(request: Request):  # TODO adjust name of pydantic model used to validate user
+async def get_user_data(request: Request): 
     token = request.cookies.get("access_token")
     if not token:
         raise HTTPException(status_code=401, detail="Missing authentication token")
@@ -313,7 +326,7 @@ async def discover(request: Request):
     token = request.cookies.get("access_token")
 
     if not token:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
+        return await get_all_users()
 
     try:
         decode_payload = jwt.decode(token, JWT_SECRET_KEY, [ALGORITHM])
