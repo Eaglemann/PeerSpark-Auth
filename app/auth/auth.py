@@ -1,16 +1,19 @@
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, APIRouter, File, UploadFile, HTTPException, Request
 from jose import jwt
 from jose.exceptions import JWTError
 from pydantic import BaseModel
 import requests
+import httpx
 import os
 from passlib.context import CryptContext
 from fastapi.responses import JSONResponse
 from ..utils.email import send_reset_email
-from fastapi import Request
+from cloudinary.uploader import upload
+from cloudinary.exceptions import Error
+from ..utils.cloudinary_config import cloudinary
 
 load_dotenv()
 
@@ -22,6 +25,10 @@ HASURA_GRAPHQL_API_CREATE_USER = os.getenv("HASURA_GRAPHQL_API_CREATE_USER")
 HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
 HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD")
 HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
+HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
+HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
+HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_GET_ALL")
+HASURA_GRAPHQL_API_SAVE_IMAGE_URL = os.getenv("HASURA_GRAPHQL_API_SAVE_IMAGE_URL")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -47,6 +54,8 @@ class SkillCreatePayload(BaseModel):
     occupation: str
     gender: str
     location: str
+    bio: str
+
 
 class PasswordResetCheck(BaseModel):
     email: str
@@ -67,6 +76,27 @@ def get_password_hash(password: str):
 
 def verify_password(plain_password: str, hashed_password:str):
     return pwd_context.verify(plain_password, hashed_password)
+
+# fucntion to save the user profile image url to the db
+def save_profile_image(url: str, user_email: str):
+    headers = {
+        'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        "email": user_email,
+        "profile_picture": url
+    }
+
+    
+    response = requests.post(HASURA_GRAPHQL_API_SAVE_IMAGE_URL, json=payload, headers=headers)
+    
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Error saving profile image URL to Hasura")
+    
+    return response.json()
+
 
 # Function to check if user already exists using GET with query param
 def check_if_user_exists(email: str):
@@ -96,6 +126,17 @@ def fetch_user_data(email: str):
         users = data.get("users", [])
         return users[0] if users else None
     raise HTTPException(status_code=500, detail="Error fetching user")
+
+def get_all_users():
+    headers = {
+        'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
+    }
+    response = requests.post(HASURA_GRAPHQL_API_GET_ALL, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        return data["users"]
+    
+    raise HTTPException(status_code=500, detail="Error fetching users")
 
 # Function to update the password
 
@@ -182,7 +223,8 @@ async def login(user: UserLogin):
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         samesite="lax",
-        secure=False  # change to True when in HTTPS production
+        secure=False,  # change to True when in HTTPS production
+        path="/"
     )
 
     return response
@@ -213,13 +255,14 @@ async def update_profile(request: Request, payload: SkillCreatePayload):
         for skill in payload.skills
     ]
 
-    # Build the JSON body expected by your Hasura REST endpoint
+    # Build the JSON body expected by Hasura REST endpoint
     hasura_payload = {
         "userId": user_id,
         "age": payload.age,
         "occupation": payload.occupation,
         "gender": payload.gender,
         "location": payload.location,
+        "bio": payload.bio,
         "skillObjects": skill_objects
     }
 
@@ -231,11 +274,42 @@ async def update_profile(request: Request, payload: SkillCreatePayload):
     response = requests.post(HASURA_GRAPHQL_API_UPDATE_USER, json=hasura_payload, headers=headers)
 
     if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to update profile")
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {response.text}")
 
     return {"message": "Profile and skills updated successfully"}
 
+#Get user data
 
+@router.post("/user-data")
+async def get_user_data(request: Request): 
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+    
+    try:
+        decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+        email = decoded_payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    user = fetch_user_data(email)
+    user_id = user.get("id")
+
+    hasura_payload = {
+        "userId" : user_id
+    }
+
+    headers = {
+        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(HASURA_GRAPHQL_API_GET_USER_DATA, json=hasura_payload, headers=headers)
+
+    return response.json()
     
 
 # Reset password
@@ -270,7 +344,41 @@ async def reset_password(request: ResetPasswordRequest):
 
     except JWTError:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+# Get all users
+@router.post("/discover")
+async def discover(request: Request):
+    token = request.cookies.get("access_token")
+
+    if not token:
+        users = get_all_users()
+        return {"users": users}
+
+    try:
+        decode_payload = jwt.decode(token, JWT_SECRET_KEY, [ALGORITHM])
+        email = decode_payload.get("sub")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     
+    payload = {
+        "excludeEmail": email
+    }
+
+
+    headers = {
+            "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+            "Content-Type": "application/json"
+        }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(HASURA_GRAPHQL_API_GET_ALL_USER, json=payload, headers=headers)
+
+    return response.json()
+
+
 
 @router.post("/reset-password-link")
 async def send_reset_password_link (request: PasswordResetCheck):
@@ -296,6 +404,31 @@ async def send_reset_password_link (request: PasswordResetCheck):
         "status": "success",
         "message": f"Reset password email sent to {request.email}"
     })
-    
 
 
+# Image upload router
+@router.post("/upload-profile-image")
+async def upload_profile_image(request: Request, file: UploadFile = File(...)):
+    token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+
+    email = decoded_payload.get("sub")
+
+    try:
+        result = upload(file.file, folder="profiles", public_id=file.filename.split('.')[0])
+
+        image_url = result["secure_url"]
+        try:
+            save_profile_image(image_url, email)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save image: {str(e)}")
+        return JSONResponse(content={
+        "status": "success",
+        "message": f"Image Uploaded, url: {image_url}"
+    })
+    except Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
