@@ -27,7 +27,7 @@ HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD
 HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
 HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
 HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
-HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
+HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_GET_ALL")
 HASURA_GRAPHQL_API_SAVE_IMAGE_URL = os.getenv("HASURA_GRAPHQL_API_SAVE_IMAGE_URL")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -131,12 +131,12 @@ def get_all_users():
     headers = {
         'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
     }
-    response = requests.get(HASURA_GRAPHQL_API_GET_ALL, headers=headers)
+    response = requests.post(HASURA_GRAPHQL_API_GET_ALL, headers=headers)
     if response.status_code == 200:
         data = response.json()
-        users = data.get("users", [])
-        return users[0] if users else None
-    raise HTTPException(status_code=500, detail="Error fetching user")
+        return data["users"]
+    
+    raise HTTPException(status_code=500, detail="Error fetching users")
 
 # Function to update the password
 
@@ -351,7 +351,8 @@ async def discover(request: Request):
     token = request.cookies.get("access_token")
 
     if not token:
-        return await get_all_users()
+        users = get_all_users()
+        return {"users": users}
 
     try:
         decode_payload = jwt.decode(token, JWT_SECRET_KEY, [ALGORITHM])
@@ -378,11 +379,6 @@ async def discover(request: Request):
     return response.json()
 
 
-    
-
-
-
-    
 
 @router.post("/reset-password-link")
 async def send_reset_password_link (request: PasswordResetCheck):
