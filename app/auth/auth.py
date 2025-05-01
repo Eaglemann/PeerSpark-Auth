@@ -29,6 +29,7 @@ HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
 HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
 HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_GET_ALL")
 HASURA_GRAPHQL_API_SAVE_IMAGE_URL = os.getenv("HASURA_GRAPHQL_API_SAVE_IMAGE_URL")
+HASURA_GRAPHQL_API_MATCH = os.getenv("HASURA_GRAPHQL_API_MATCH")
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -69,6 +70,9 @@ class UserInDB(UserRegister):
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
+
+class MatchPayload(BaseModel):
+    email_to_match: str
 
 # Helper function for password hashing
 def get_password_hash(password: str):
@@ -432,3 +436,34 @@ async def upload_profile_image(request: Request, file: UploadFile = File(...)):
     })
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Match the user
+@router.post("/match")
+async def match_user(request: Request, payload: MatchPayload):
+    token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Not Authenticated")
+
+    decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+    email = decoded_payload.get("sub")
+
+    payload = {
+        "email": email,
+        "email_to_match": payload.email_to_match
+    }
+
+    headers = {
+            "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+            "Content-Type": "application/json"
+        }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = client.post(HASURA_GRAPHQL_API_MATCH, json=payload, headers=headers)
+
+    except Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
