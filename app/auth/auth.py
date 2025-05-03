@@ -473,6 +473,7 @@ async def match_user(request: Request, payload: MatchPayload):
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# TODO delete this function
 # Helper function to get the match id
 def get_match_id(user1_email, user2_email):
     headers = {
@@ -501,10 +502,10 @@ async def update_match_status(request: Request, payload: UpdateStatusPayload):
     user1_email = decode_token.get("sub")
 
     user2_email = payload.user2_email
-    match_id = get_match_id(user1_email, user2_email)
 
     payload = {
-        "match_id": match_id,
+        "email1": user1_email,
+        "email2": user2_email,
         "status": payload.status
     }
 
