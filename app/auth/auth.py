@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, APIRouter, File, UploadFile, HTTPException, Request
+from fastapi import APIRouter, File, UploadFile, HTTPException, Request
 from jose import jwt
 from jose.exceptions import JWTError
 from pydantic import BaseModel
@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from ..utils.email import send_reset_email
 from cloudinary.uploader import upload
 from cloudinary.exceptions import Error
-from ..utils.cloudinary_config import cloudinary
 
 load_dotenv()
 
@@ -26,9 +25,9 @@ HASURA_GRAPHQL_API_CHECK_USER = os.getenv("HASURA_GRAPHQL_API_CHECK_USER")
 HASURA_GRAPHQL_API_RESET_PASSWORD = os.getenv("HASURA_GRAPHQL_API_RESET_PASSWORD")
 HASURA_GRAPHQL_API_UPDATE_USER = os.getenv("HASURA_GRAPHQL_API_UPDATE_USER")
 HASURA_GRAPHQL_API_GET_USER_DATA = os.getenv("HASURA_GRAPHQL_API_GET_USER_DATA")
-HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
-HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_GET_ALL")
 HASURA_GRAPHQL_API_SAVE_IMAGE_URL = os.getenv("HASURA_GRAPHQL_API_SAVE_IMAGE_URL")
+
+
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 JWT_SECRET_KEY  = os.getenv("JWT_SECRET_KEY")
@@ -56,7 +55,6 @@ class SkillCreatePayload(BaseModel):
     location: str
     bio: str
 
-
 class PasswordResetCheck(BaseModel):
     email: str
 class UserLogin(BaseModel):
@@ -77,7 +75,7 @@ def get_password_hash(password: str):
 def verify_password(plain_password: str, hashed_password:str):
     return pwd_context.verify(plain_password, hashed_password)
 
-# fucntion to save the user profile image url to the db
+# Function to save the user profile image url to the db
 def save_profile_image(url: str, user_email: str):
     headers = {
         'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
@@ -113,7 +111,7 @@ def check_if_user_exists(email: str):
     
     raise HTTPException(status_code=500, detail="Error checking user existence in Hasura")
 
-# Helper function to retrieve user from the data, neccesary for login
+# Helper function to retrieve user from the data, necessary for login
 # TODO refactor check_if_user_exists and fetch_user_data together
 
 def fetch_user_data(email: str):
@@ -126,17 +124,6 @@ def fetch_user_data(email: str):
         users = data.get("users", [])
         return users[0] if users else None
     raise HTTPException(status_code=500, detail="Error fetching user")
-
-def get_all_users():
-    headers = {
-        'x-hasura-admin-secret': HASURA_ADMIN_SECRET,
-    }
-    response = requests.post(HASURA_GRAPHQL_API_GET_ALL, headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        return data["users"]
-    
-    raise HTTPException(status_code=500, detail="Error fetching users")
 
 # Function to update the password
 
@@ -172,7 +159,7 @@ def create_user_in_hasura(user_data: UserInDB):
 
 # Register route
 
-@router.post("/register")
+@router.post("/register", operation_id="custom_register_user")
 async def register(user: UserRegister):
     user_exists = check_if_user_exists(user.email)
     
@@ -188,7 +175,7 @@ async def register(user: UserRegister):
 
 # Login
 
-@router.post("/login")
+@router.post("/login", operation_id="custom_user_login")
 async def login(user: UserLogin):
     user_data = fetch_user_data(user.email)
 
@@ -231,7 +218,7 @@ async def login(user: UserLogin):
 
 # Update profile
 
-@router.post("/update-profile")
+@router.post("/update-profile", operation_id="custom_update_user_profile")
 async def update_profile(request: Request, payload: SkillCreatePayload):
     token = request.cookies.get("access_token")
     if not token:
@@ -280,7 +267,7 @@ async def update_profile(request: Request, payload: SkillCreatePayload):
 
 #Get user data
 
-@router.post("/user-data")
+@router.post("/get-user-data", operation_id="custom_user_data_retrieval")
 async def get_user_data(request: Request): 
     token = request.cookies.get("access_token")
     if not token:
@@ -314,7 +301,7 @@ async def get_user_data(request: Request):
 
 # Reset password
 
-@router.post("/reset-password")
+@router.post("/reset-password", operation_id="custom_user_reset_password")
 async def reset_password(request: ResetPasswordRequest):
     try:
         # 1. Decode token
@@ -345,42 +332,10 @@ async def reset_password(request: ResetPasswordRequest):
     except JWTError:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
 
-# Get all users
-@router.post("/discover")
-async def discover(request: Request):
-    token = request.cookies.get("access_token")
-
-    if not token:
-        users = get_all_users()
-        return {"users": users}
-
-    try:
-        decode_payload = jwt.decode(token, JWT_SECRET_KEY, [ALGORITHM])
-        email = decode_payload.get("sub")
-        
-        if not email:
-            raise HTTPException(status_code=400, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    payload = {
-        "excludeEmail": email
-    }
-
-
-    headers = {
-            "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
-            "Content-Type": "application/json"
-        }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(HASURA_GRAPHQL_API_GET_ALL_USER, json=payload, headers=headers)
-
-    return response.json()
 
 
 
-@router.post("/reset-password-link")
+@router.post("/reset-password-link", operation_id="custom_send_password_reset_link")
 async def send_reset_password_link (request: PasswordResetCheck):
     check_user = check_if_user_exists(request.email)
 
@@ -407,7 +362,7 @@ async def send_reset_password_link (request: PasswordResetCheck):
 
 
 # Image upload router
-@router.post("/upload-profile-image")
+@router.post("/upload-profile-image", operation_id="custom_upload_user_profile_image")
 async def upload_profile_image(request: Request, file: UploadFile = File(...)):
     token = request.cookies.get("access_token")
 
