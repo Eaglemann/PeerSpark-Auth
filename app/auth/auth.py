@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from hashlib import algorithms_available
 from http.client import responses
 from typing import List, Optional
 from dotenv import load_dotenv
@@ -31,8 +32,10 @@ HASURA_GRAPHQL_API_GET_ALL_USER = os.getenv("HASURA_GRAPHQL_API_GET_ALL_USER")
 HASURA_GRAPHQL_API_GET_ALL = os.getenv("HASURA_GRAPHQL_API_GET_ALL")
 HASURA_GRAPHQL_API_SAVE_IMAGE_URL = os.getenv("HASURA_GRAPHQL_API_SAVE_IMAGE_URL")
 HASURA_GRAPHQL_API_MATCH = os.getenv("HASURA_GRAPHQL_API_MATCH")
-HASURA_GRAPHQL_API_GET_MATCH_ID = os.getenv("HASURA_GRAPHQL_API_GET_MATCH_ID")
+# HASURA_GRAPHQL_API_GET_MATCH_ID = os.getenv("HASURA_GRAPHQL_API_GET_MATCH_ID")
 HASURA_GRAPHQL_API_UPDATE_MATCH = os.getenv("HASURA_GRAPHQL_API_UPDATE_MATCH")
+HASURA_GRAPHQL_API_GET_ALL_MATCHES = os.getenv("HASURA_GRAPHQL_API_GET_ALL_MATCHES")
+HASURA_GRAPHQL_API_IS_MATCHED = os.getenv("HASURA_GRAPHQL_API_IS_MATCHED")
 
 HASURA_ADMIN_SECRET = os.getenv("HASURA_ADMIN_SECRET")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -61,6 +64,8 @@ class SkillCreatePayload(BaseModel):
     location: str
     bio: str
 
+class IsMatchedPayload(BaseModel):
+    email2: str
 
 class PasswordResetCheck(BaseModel):
     email: str
@@ -456,9 +461,9 @@ async def match_user(request: Request, payload: MatchPayload):
     decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
     email = decoded_payload.get("sub")
 
-    payload = {
-        "email": email,
-        "email_to_match": payload.email_to_match
+    json_payload = {
+        "email1": email,
+        "email2": payload.email_to_match
     }
 
     headers = {
@@ -468,29 +473,29 @@ async def match_user(request: Request, payload: MatchPayload):
 
     try:
         async with httpx.AsyncClient() as client:
-            response = client.post(HASURA_GRAPHQL_API_MATCH, json=payload, headers=headers)
+            response = client.post(HASURA_GRAPHQL_API_MATCH, json=json_payload, headers=headers)
 
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # TODO delete this function
 # Helper function to get the match id
-def get_match_id(user1_email, user2_email):
-    headers = {
-        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "user1_email": user1_email,
-        "user2_email": user2_email
-    }
-    try:
-        response = requests.post(HASURA_GRAPHQL_API_GET_MATCH_ID, json=payload, headers=headers)
-        return response
-
-    except Error as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# def get_match_id(user1_email, user2_email):
+#     headers = {
+#         "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+#         "Content-Type": "application/json"
+#     }
+#
+#     payload = {
+#         "user1_email": user1_email,
+#         "user2_email": user2_email
+#     }
+#     try:
+#         response = requests.post(HASURA_GRAPHQL_API_GET_MATCH_ID, json=payload, headers=headers)
+#         return response
+#
+#     except Error as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 # Update Match Status
@@ -503,7 +508,7 @@ async def update_match_status(request: Request, payload: UpdateStatusPayload):
 
     user2_email = payload.user2_email
 
-    payload = {
+    json_payload = {
         "email1": user1_email,
         "email2": user2_email,
         "status": payload.status
@@ -516,7 +521,7 @@ async def update_match_status(request: Request, payload: UpdateStatusPayload):
 
     try:
         async with httpx.AsyncClient() as client:
-            response = client.post(HASURA_GRAPHQL_API_UPDATE_MATCH, json=payload, headers=headers)
+            response = client.post(HASURA_GRAPHQL_API_UPDATE_MATCH, json=json_payload, headers=headers)
             return JSONResponse(content={
         "status": "success",
         "message": "Match status updated successfully."
@@ -524,10 +529,62 @@ async def update_match_status(request: Request, payload: UpdateStatusPayload):
     except Error as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Get all matches
+@router.post("/get-all-matches")
+async def get_all_matches(request: Request):
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not Authorized")
+
+    decoded_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+    email = decoded_payload.get("sub")
+
+    payload = {
+        "email" : email
+    }
+
+    headers = {
+        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = client.post(HASURA_GRAPHQL_API_GET_ALL_MATCHES, json=payload, headers=headers)
+            return response
+
+    except Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
+# Check if users are matched
+@router.post("/is-matched")
+async def is_matched(request: Request, payload: IsMatchedPayload):
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not Authenticated")
 
+    decode_payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM])
+    email1 = decode_payload.get("sub")
 
+    headers = {
+        "x-hasura-admin-secret": HASURA_ADMIN_SECRET,
+        "Content-Type": "application/json"
+    }
 
+    json_payload = {
+        "email1": email1,
+        "email2": payload.email2
+    }
 
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(HASURA_GRAPHQL_API_IS_MATCHED, json=json_payload, headers=headers)
+            data = response.json()
+
+            count = data["data"]["matches_aggregate"]["aggregate"]["count"]
+            return JSONResponse({"matched": count >= 1})
+
+    except Error as e:
+        raise HTTPException(status_code=500, detail=str(e))
